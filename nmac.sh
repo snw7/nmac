@@ -1,6 +1,6 @@
 #!/bin/zsh
 
-# written by snw7 - 21.08.2023
+# This script is licensed under MIT License.
 
 # Check if script has sudo privileges
 if [ "$EUID" -ne 0 ]; then
