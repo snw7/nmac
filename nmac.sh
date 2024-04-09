@@ -1,6 +1,6 @@
 #!/bin/zsh
 
-# This script is licensed under MIT License.
+# This script is written by snw7 and licensed under MIT License.
 
 # Check if script has sudo privileges
 if [ "$EUID" -ne 0 ]; then
@@ -23,6 +23,8 @@ readonly PRESET_HOST=$(awk -F'=' '/^preset_host=/ { print $2}' $path_to_config)
 
 readonly ORIGINAL_MAC=$(awk -F'=' '/^original_mac=/ { print $2}' $path_to_config)
 readonly ORIGINAL_HOST=$(awk -F'=' '/^original_host=/ { print $2}' $path_to_config)
+
+readonly HOSTLIST=$(awk -F'=' '/^hostlist=/ { print $2}' $path_to_config)
 
 # Parse options
 while getopts ":nrphmds:" opt; do
@@ -83,7 +85,7 @@ if [[ $option == 'h' ]];then
     -r                change IP, MAC and HOSTNAME to original
     -s MAC HOSTNAME   set MAC and HOSTNAME to custom values
 
-    -p                add for "in_public" mode
+    -p                add to other option for \"in_public\" mode - f.E. (-np)
 
     
     For mode '-m' save a file with hostnames as 'hostlist.txt' to the directory defined in your .config file."
@@ -98,14 +100,14 @@ if [[ $option == 'n' ]] || [[ $option == 'm' ]];then
 elif [[ $option == 's' ]] || [[ $option == 'd' ]] || [[ $option == 'r' ]];then
     mac=$arg_mac
 else
-    echo 'ERROR: no option defined (MAC)\nTERMINATING'
+    echo '\nERROR: no option defined (MAC)\nTERMINATING'
     exit 1
 fi
 
 ## COMPUTE HOSTNAME
 if [[ $option == 'm' ]];then
     # fetch random from file
-    arg_host=$(shuf -n 1 ~/path/to/file/hostlist.txt)
+    arg_host=$(shuf -n 1 $HOSTLIST)
 fi
 
 if [[ $option == 'n' ]];then
