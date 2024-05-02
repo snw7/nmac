@@ -4,7 +4,7 @@ This script can be used to change a devices MAC address, hostname (and therefore
 ## Installation
 Add this line to your .zshrc file:
 `alias nmac='~/path/to/file/nmac.sh'`
+Add a `mac-vendors.csv` file. Download from f.E. (maclookup.app)[https://maclookup.app/downloads/csv-database]
 
 ## Dependencies
-Install the 'spoof-mac' package. I suggest using homebrew
-`brew install spoof-mac`
+This script has no further dependencies outside the macOS base system.

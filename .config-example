@@ -4,3 +4,4 @@ preset_host=Device
 original_mac=00:00:00:00:00:00
 original_host=Root
 hostlist=./hostlist.txt
+vendorlist=./mac-vendors.csv

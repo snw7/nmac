@@ -8,11 +8,10 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Get config
-readonly CURRENT_PATH=$(pwd)
+# Load config
+readonly CURRENT_PATH="$(dirname "$0")"
 path_to_config="$CURRENT_PATH/.config"
 
-# check if the user passed in the config file and that the file exists
 if [ ! -f "$path_to_config" ]; then
 	printf "\nThe config file doesn't exist. Please update the path in the script.\n\n"
 	exit 1
@@ -24,7 +23,23 @@ readonly PRESET_HOST=$(awk -F'=' '/^preset_host=/ { print $2}' $path_to_config)
 readonly ORIGINAL_MAC=$(awk -F'=' '/^original_mac=/ { print $2}' $path_to_config)
 readonly ORIGINAL_HOST=$(awk -F'=' '/^original_host=/ { print $2}' $path_to_config)
 
-readonly HOSTLIST=$(awk -F'=' '/^hostlist=/ { print $2}' $path_to_config)
+readonly HOSTLIST="$CURRENT_PATH/$(awk -F'=' '/^hostlist=/ { print $2}' $path_to_config)"
+readonly VENDORLIST="$CURRENT_PATH/$(awk -F'=' '/^vendorlist=/ { print $2}' $path_to_config)"
+
+if [[ ! -n $PRESET_MAC ]] || [[ ! -n $PRESET_HOST ]] || [[ ! -n $ORIGINAL_MAC ]] || [[ ! -n $ORIGINAL_HOST ]];then
+    echo "\nERROR: Your .config file is incomplete. Please check for missing values.\nTERMINATING\n"
+    exit 1
+fi
+
+if [[ $HOSTLIST == $CURRENT_PATH"/" ]] || [[ ! -f $HOSTLIST ]];then
+    echo "\nERROR: Hostlist file is missing. Please add it to your .config file and save it to the defined relative path.\nTERMINATING\n"
+    exit 1
+fi
+
+if [[ $VENDORLIST == $CURRENT_PATH"/" ]] || [[ ! -f $VENDORLIST ]];then
+    echo "\nERROR: Vendorlist file is missing. Please add it to your .config file and save it to the defined relative path.\nTERMINATING\n"
+    exit 1
+fi
 
 # Parse options
 while getopts ":nrphmds:" opt; do
@@ -67,7 +82,7 @@ while getopts ":nrphmds:" opt; do
 done
 
 if [[ $# -eq 0 ]]; then
-    echo '\nnmac 1.0\nType "-h" for more information.\n'
+    echo '\nnmac 1.1\nType "-h" for more information.\n'
     exit 1
 fi
 
@@ -88,20 +103,33 @@ if [[ $option == 'h' ]];then
     -p                add to other option for \"in_public\" mode - f.E. (-np)
 
     
-    For mode '-m' save a file with hostnames as 'hostlist.txt' to the directory defined in your .config file."
+    For mode '-m' save a file with hostnames as 'hostlist.txt' to the directory defined in your .config file.\n"
+    exit 1
+fi
+
+if [[ ! $option ]];then
+    echo '\nERROR: No option defined.\nTERMINATING\n'
     exit 1
 fi
 
 ## GENERATE MAC address
-# -> avoid generating a multicast address (set first two chars)
+vendor_name="-"
+
 if [[ $option == 'n' ]] || [[ $option == 'm' ]];then
-    mac=$(openssl rand -hex 5 | sed 's/\(..\)/\1:/g; s/.$//')
-    mac="00:$mac"
+    vendor=$(shuf -n 1 $VENDORLIST)
+    vendor_prefix=$(echo $vendor | cut -d ',' -f1)
+    vendor_name=$(echo "$vendor" | awk -F ',' '{if ($2 ~ /^".*"$/) {gsub(/"/, "", $2); print $2} else {print $2}}'|sed 's/^"//')
+
+    vendor_second_half=",$(echo "$vendor" | awk -F '"' '{print $2}' | awk -F ',' '{print $2}')"
+    if [[ $vendor_second_half != "," ]]; then
+        vendor_name="$vendor_name$vendor_second_half"
+    fi
+
+    random_mac=$(openssl rand -hex 4 | sed 's/\(..\)/\1:/g; s/.$//')
+    max_length=$((17 - ${#vendor_prefix}))
+    mac="${vendor_prefix}${random_mac: -$max_length}"
 elif [[ $option == 's' ]] || [[ $option == 'd' ]] || [[ $option == 'r' ]];then
     mac=$arg_mac
-else
-    echo '\nERROR: no option defined (MAC)\nTERMINATING'
-    exit 1
 fi
 
 ## COMPUTE HOSTNAME
@@ -118,11 +146,6 @@ if [[ $option == 's' ]] || [[ $option == 'd' ]]|| [[ $option == 'm' ]] || [[ $op
     newHostname=$arg_host
 fi
 
-if [[ ! $option ]];then
-    echo 'ERROR: no option defined (HOSTNAME)\nTERMINATING'
-    exit 1
-fi
-
 ## GET old IP, MAC
 ip_address_old=$(ifconfig en0 | awk '/inet / {print $2}') # ipconfig getifaddr en0
 mac_address_old=$(ifconfig en0 | grep ether)
@@ -132,18 +155,20 @@ mac_address_old=$(ifconfig en0 | grep ether)
 # Start network activity
 ###
 
-ssid=$(/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I | awk -F': ' '/ SSID/{print $2}')
+ssid=$(sudo wdutil info|awk -F': ' '/ SSID/{print $2}')
 
-if [[ $(/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I) == "AirPort: Off" ]]; then
-    wifiState="down";
-    networksetup -setairportpower en0 on 
-    sudo ifconfig en0 up
+if [[ $(sudo wdutil info | grep -A 2 "MAC Address" | awk -F': ' '/Power/{print $2}') == "Off [Off]" ]]; then
+    previous_wifi_state="down";
 else
-    wifiState="up";
+    previous_wifi_state="up";
 fi
 
+networksetup -setairportpower en0 off
+networksetup -setairportpower en0 on 
+sudo ifconfig en0 up
+
 # CHANGE mac
-sudo /opt/homebrew/bin/spoof-mac set $mac en0
+sudo ifconfig en0 ether $mac
 
 # GET new MAC
 mac_address_new=$(ifconfig en0 | grep ether)
@@ -162,55 +187,57 @@ sudo ipconfig set en0 BOOTP
 sudo networksetup -setv6off Wi-Fi
 sudo networksetup -setv6automatic Wi-Fi
 
-if [[ $wifiState == "up" ]] && [[ $ssid != "" ]]; then
+if [[ $previous_wifi_state == "up" ]] && [[ $ssid != "None" ]]; then
     # reconnect to wifi
-    if [[ -n "${ssid// }" ]]; then
-        networksetup -setairportnetwork en0 $ssid> /dev/null
-        state="Reconnected to: $ssid"
-    else
-        state="Finished."
-    fi
-    
-    # wait for new IP
-    count=0
-    condition_met=false
+    for count in {0..15}; do
+        # initiate reconnect every 7s
+        if [[ $count -eq 0 || $((count % 8)) -eq 0 ]]; then
+            networksetup -setairportnetwork en0 $ssid> /dev/null
+        fi
 
-    while [[ "$condition_met" != true ]]; do
-        ((count++)) 
         ip_address_new=$(ifconfig en0 | awk '/inet / {print $2}')
 
         # terminate when new IP is read or waiting time exceeds 15s
-        if [[ -n "${ip_address_new// }" ]] || ((count > 15)); then
-            condition_met=true
-        fi
-
-        # retry connection
-        if (( count == 8 )); then
-            networksetup -setairportnetwork en0 $ssid> /dev/null
+        if [[ -n "${ip_address_new// }" ]]; then
+            break
         fi
 
         sleep 1
     done
+
+    new_ssid=$(sudo wdutil info|awk -F': ' '/ SSID/{print $2}')
+
+    if [[ $new_ssid != "None" ]]; then
+        state="Reconnected to: $new_ssid\n"
+    else
+        state="Failed to reconnect to: $ssid\n"
+    fi
 else
     # disable wifi for enhanced privacy
     networksetup -setairportpower en0 off
 fi
 
-
+###
 # PRINT changes
+###
 
 hostname=$(hostname)
 
-if [[ $in_public == "true" ]]; then
-    if [[ $mac_address_new != $mac_address_old ]]; then
-        mac_changed="true"
-    fi
+if [[ $mac_address_new != $mac_address_old ]]; then
+    mac_changed="true"
+fi
 
+if [[ $mac_changed != "true" ]]; then
+    vendor_name="-"
+fi
+
+if [[ $in_public == "true" ]]; then
     mac_address_old="00:00:00:00:00:00"
     mac_address_new="00:00:00:00:00:00"
     ip_address_old="0.0.0.0"
     ip_address_new="0.0.0.0"
     hostname="-"
+    vendor_name="-"
 fi
 
 echo "\nnew HOSTNAME: $hostname"
@@ -218,16 +245,20 @@ echo "\nnew HOSTNAME: $hostname"
 echo "\nold MAC: ${mac_address_old[-17,-1]}" # -18, -2 (before macOS SONOMA)
 echo "new MAC: ${mac_address_new[-17,-1]}"
 
-if [[ $mac_changed == "true" ]]; then
+if [[ $mac_changed == "true" ]] && [[ $in_public == "true" ]]; then
     echo "-> changed"
 fi
 
-if [[ $ssid != "" ]]; then
-    echo "\nold IP: ${ip_address_old}"
+echo "\nVendor: $vendor_name\n"
+
+if [[ $ssid != 'None' ]]; then
+    echo "old IP: ${ip_address_old}"
     echo "new IP: ${ip_address_new}\n"
 fi
 
-echo $state;
+if [[ -n $state ]]; then
+    echo $state;
+fi
 
 if [[ $option == 'n' ]] || [[ $option == 'm' ]];then
     echo "Identity switched.\n"
